@@ -43,6 +43,23 @@ def init_db():
         FOREIGN KEY(category_id) REFERENCES categories(id),
         FOREIGN KEY(account_id) REFERENCES accounts(id)
     );
+    
+
+    CREATE TABLE IF NOT EXISTS wishlist (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        price REAL NOT NULL,
+        priority TEXT CHECK(priority IN ('low','medium','high')) DEFAULT 'medium',
+        status TEXT CHECK(status IN ('considering','saving','bought','skipped'))
+            DEFAULT 'considering',
+        category TEXT,
+        url TEXT,
+        note TEXT,
+        target_date TEXT,
+        bought_date TEXT,
+        actual_price REAL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
     """)
 
     # Default accounts
