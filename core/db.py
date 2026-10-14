@@ -1,0 +1,99 @@
+import sqlite3
+from pathlib import Path
+import pandas as pd
+
+DB_PATH = Path(__file__).parent.parent / "data" / "finance.db"
+DB_PATH.parent.mkdir(exist_ok=True)
+
+
+def get_conn():
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    conn = get_conn()
+    c = conn.cursor()
+
+    c.executescript("""
+    CREATE TABLE IF NOT EXISTS accounts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        type TEXT DEFAULT 'cash',
+        balance REAL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS categories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        type TEXT CHECK(type IN ('income','expense')),
+        UNIQUE(name, type)
+    );
+
+    CREATE TABLE IF NOT EXISTS transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL,
+        type TEXT CHECK(type IN ('income','expense')),
+        amount REAL NOT NULL,
+        category_id INTEGER,
+        account_id INTEGER,
+        note TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(category_id) REFERENCES categories(id),
+        FOREIGN KEY(account_id) REFERENCES accounts(id)
+    );
+    """)
+
+    # Default accounts
+    c.execute("SELECT COUNT(*) FROM accounts")
+    if c.fetchone()[0] == 0:
+        c.executemany(
+            "INSERT INTO accounts (name, type, balance) VALUES (?,?,?)",
+            [
+                ("Cash", "cash", 0),
+                ("KBZ Bank", "bank", 0),
+                ("Wave Money", "wallet", 0),
+            ],
+        )
+
+    # Default categories
+    c.execute("SELECT COUNT(*) FROM categories")
+    if c.fetchone()[0] == 0:
+        default_cats = [
+            ("Salary", "income"),
+            ("Freelance", "income"),
+            ("Other Income", "income"),
+            ("Food", "expense"),
+            ("Transport", "expense"),
+            ("Rent", "expense"),
+            ("Utilities", "expense"),
+            ("Entertainment", "expense"),
+            ("Health", "expense"),
+            ("Shopping", "expense"),
+            ("Other", "expense"),
+        ]
+        c.executemany(
+            "INSERT INTO categories (name, type) VALUES (?,?)",
+            default_cats,
+        )
+
+    conn.commit()
+    conn.close()
+
+
+def query_df(sql, params=()):
+    conn = get_conn()
+    df = pd.read_sql_query(sql, conn, params=params)
+    conn.close()
+    return df
+
+
+def execute(sql, params=()):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(sql, params)
+    conn.commit()
+    last_id = c.lastrowid
+    conn.close()
+    return last_id
