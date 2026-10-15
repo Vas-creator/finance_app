@@ -16,6 +16,7 @@ def init_db():
     conn = get_conn()
     c = conn.cursor()
 
+    # ============ SCHEMA ============
     c.executescript("""
     CREATE TABLE IF NOT EXISTS accounts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,6 +29,7 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         type TEXT CHECK(type IN ('income','expense')),
+        budget REAL DEFAULT 0,
         UNIQUE(name, type)
     );
 
@@ -43,7 +45,6 @@ def init_db():
         FOREIGN KEY(category_id) REFERENCES categories(id),
         FOREIGN KEY(account_id) REFERENCES accounts(id)
     );
-    
 
     CREATE TABLE IF NOT EXISTS wishlist (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,36 +63,33 @@ def init_db():
     );
     """)
 
-    # Default accounts
+    # ============ DEFAULT DATA (minimal) ============
+    # App ကို စတင်သုံးနိုင်ဖို့ အနည်းဆုံး data ပဲ ထည့်
+    # ကျန်တာ user ကိုယ်တိုင် Categories page ကနေ ထည့်နိုင်
+
+    # Default accounts (၃ ခု)
     c.execute("SELECT COUNT(*) FROM accounts")
     if c.fetchone()[0] == 0:
         c.executemany(
             "INSERT INTO accounts (name, type, balance) VALUES (?,?,?)",
             [
                 ("Cash", "cash", 0),
-                ("KBZ Bank", "bank", 0),
-                ("Wave Money", "wallet", 0),
+                ("Bank", "bank", 0),
+                ("Wallet", "wallet", 0),
             ],
         )
 
-    # Default categories
+    # Default categories (၄ ခုပဲ — minimal)
     c.execute("SELECT COUNT(*) FROM categories")
     if c.fetchone()[0] == 0:
         default_cats = [
-            ("Salary", "income"),
-            ("Freelance", "income"),
-            ("Other Income", "income"),
-            ("Food", "expense"),
-            ("Transport", "expense"),
-            ("Rent", "expense"),
-            ("Utilities", "expense"),
-            ("Entertainment", "expense"),
-            ("Health", "expense"),
-            ("Shopping", "expense"),
-            ("Other", "expense"),
+            ("Salary", "income", 0),
+            ("Other Income", "income", 0),
+            ("Food", "expense", 0),
+            ("Other", "expense", 0),
         ]
         c.executemany(
-            "INSERT INTO categories (name, type) VALUES (?,?)",
+            "INSERT INTO categories (name, type, budget) VALUES (?,?,?)",
             default_cats,
         )
 
