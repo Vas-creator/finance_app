@@ -161,8 +161,33 @@ for _, row in df.iterrows():
                     "skipped": "❌ မဝယ်တော့",
                 }[x],
             )
+            
             if new_status != row["status"]:
-                if new_status == "bought":
+                if new_status == "saving" and row["status"] != "saving":
+                    # Auto Goal ဖန်တီး (ရှိပြီးသား ရှိလား စစ်)
+                    existing = query_df(
+                        "SELECT id FROM goals WHERE name=?",
+                        (f"🛍 {row['name']}",),
+                    )
+                    if existing.empty:
+                        execute(
+                            """
+                            INSERT INTO goals (name, target, saved, deadline, note)
+                            VALUES (?,?,0,?,?)
+                            """,
+                            (
+                                f"🛍 {row['name']}",
+                                row["price"],
+                                row["target_date"],
+                                f"Wishlist ကနေ auto-convert\n{row['note'] or ''}",
+                            ),
+                        )
+                        st.toast(f"🎯 Goal ဖန်တီးပြီ: {row['name']}")
+                    execute(
+                        "UPDATE wishlist SET status=? WHERE id=?",
+                        (new_status, row["id"]),
+                    )
+                elif new_status == "bought":
                     execute(
                         """
                         UPDATE wishlist
