@@ -79,20 +79,7 @@ def init_db():
             ],
         )
 
-    # Default categories (၄ ခုပဲ — minimal)
-    c.execute("SELECT COUNT(*) FROM categories")
-    if c.fetchone()[0] == 0:
-        default_cats = [
-            ("Salary", "income", 0),
-            ("Other Income", "income", 0),
-            ("Food", "expense", 0),
-            ("Other", "expense", 0),
-        ]
-        c.executemany(
-            "INSERT INTO categories (name, type, budget) VALUES (?,?,?)",
-            default_cats,
-        )
-
+    
     conn.commit()
     conn.close()
 
