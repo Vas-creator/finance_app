@@ -1,3 +1,4 @@
+import streamlit as st
 import sqlite3
 from pathlib import Path
 import pandas as pd
@@ -12,9 +13,30 @@ def get_conn():
     return conn
 
 
+@st.cache_data(ttl=30)
+def query_df(sql, params=()):
+    """Cache query results for 30 seconds"""
+    conn = get_conn()
+    df = pd.read_sql_query(sql, conn, params=params)
+    conn.close()
+    return df
+
+
 def init_db():
+    # ... (existing code)
+    pass
+
+
+def execute(sql, params=()):
     conn = get_conn()
     c = conn.cursor()
+    c.execute(sql, params)
+    conn.commit()
+    last_id = c.lastrowid
+    conn.close()
+    # Clear cache after write
+    st.cache_data.clear()
+    return last_id
 
     # ============ SCHEMA ============
     c.executescript("""

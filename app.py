@@ -14,6 +14,27 @@ st.set_page_config(
     layout="wide",
 )
 
+st.markdown("""
+<style>
+    @media (max-width: 768px) {
+        .stButton button {
+            width: 100%;
+            padding: 12px;
+            font-size: 16px;
+        }
+        h1 { font-size: 24px !important; }
+        h2 { font-size: 20px !important; }
+        h3 { font-size: 18px !important; }
+        .stMetric [data-testid="stMetricValue"] {
+            font-size: 20px !important;
+        }
+    }
+    section[data-testid="stSidebar"] {
+        width: 250px !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # ============ AUTH ============
 with open("config.yaml", encoding="utf-8") as f:
     config = yaml.load(f, Loader=SafeLoader)
