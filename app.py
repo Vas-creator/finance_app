@@ -2,7 +2,7 @@ import streamlit as st
 import yaml
 from yaml.loader import SafeLoader
 import streamlit_authenticator as stauth
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta   # ← datetime ထည့်
 import plotly.express as px
 import plotly.graph_objects as go
 from core.db import init_db, query_df
@@ -49,6 +49,110 @@ init_db()
 # ============ HEADER ============
 st.title("💰 My Personal Finance")
 st.caption(f"📅 {date.today().strftime('%B %d, %Y')}")
+
+# ============ ALERTS ============
+st.subheader("🔔 သတိပေးချက်")
+
+alerts = []
+
+# 1. Over-budget alerts
+over_budget = query_df(
+    """
+    SELECT c.name AS category, c.budget,
+           COALESCE(SUM(t.amount),0) AS spent
+    FROM categories c
+    LEFT JOIN transactions t
+        ON t.category_id = c.id
+       AND t.type='expense'
+       AND t.date >= ? AND t.date < ?
+    WHERE c.type='expense' AND c.budget > 0
+    GROUP BY c.id
+    HAVING spent > c.budget
+    """,
+    month_range(),
+)
+
+for _, row in over_budget.iterrows():
+    over = row["spent"] - row["budget"]
+    pct = row["spent"] / row["budget"] * 100
+    alerts.append(
+        f"🔴 **{row['category']}** budget ကျော်နေတယ် — "
+        f"{mmk(row['spent'])} / {mmk(row['budget'])} ({pct:.0f}%)"
+    )
+
+# 2. Goal deadlines (within 7 days)
+upcoming_goals = query_df(
+    """
+    SELECT name, target, saved, deadline
+    FROM goals
+    WHERE deadline IS NOT NULL
+      AND saved < target
+      AND date(deadline) <= date('now', '+7 days')
+      AND date(deadline) >= date('now')
+    ORDER BY deadline
+    """
+)
+
+for _, g in upcoming_goals.iterrows():
+    deadline_date = datetime.fromisoformat(g["deadline"]).date()
+    days_left = (deadline_date - date.today()).days
+    alerts.append(
+        f"⏰ **{g['name']}** — ရက် **{days_left}** ကျန် "
+        f"({mmk(g['saved'])} / {mmk(g['target'])})"
+    )
+
+# 3. Goal deadlines passed (overdue)
+overdue_goals = query_df(
+    """
+    SELECT name, target, saved, deadline
+    FROM goals
+    WHERE deadline IS NOT NULL
+      AND saved < target
+      AND date(deadline) < date('now')
+    ORDER BY deadline
+    """
+)
+
+for _, g in overdue_goals.iterrows():
+    alerts.append(
+        f"❗ **{g['name']}** — deadline လွန်နေပြီ ({g['deadline']})"
+    )
+
+# 4. Low balance accounts
+low_balance = query_df(
+    "SELECT name, balance FROM accounts WHERE balance < 50000 ORDER BY balance"
+)
+
+for _, acc in low_balance.iterrows():
+    if acc["balance"] >= 0:
+        alerts.append(
+            f"💰 **{acc['name']}** balance နည်းနေတယ် — {mmk(acc['balance'])}"
+        )
+    else:
+        alerts.append(
+            f"⚠️ **{acc['name']}** balance အနုတ်နေတယ် — {mmk(acc['balance'])}"
+        )
+
+# 5. Wishlist "saving" count
+saving_wishes = query_df(
+    "SELECT COUNT(*) AS n FROM wishlist WHERE status='saving'"
+)["n"][0]
+
+if saving_wishes > 0:
+    alerts.append(
+        f"🛍 **{saving_wishes}** wishlist items ငွေစုနေဆဲ — Goals page မှာ ကြည့်"
+    )
+
+# Display alerts
+if alerts:
+    for alert in alerts[:5]:  # Top 5 only
+        st.warning(alert)
+
+    if len(alerts) > 5:
+        st.caption(f"... နောက်ထပ် {len(alerts) - 5} alerts")
+else:
+    st.success("✅ သတိပေးချက် မရှိဘူး — အားလုံး ကောင်း")
+
 st.divider()
 
 # ============ 1. MONTHLY SUMMARY ============
