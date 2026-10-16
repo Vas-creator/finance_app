@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import yaml
 from yaml.loader import SafeLoader
@@ -36,8 +37,23 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ============ AUTH ============
-with open("config.yaml", encoding="utf-8") as f:
-    config = yaml.load(f, Loader=SafeLoader)
+
+if os.path.exists("config.yaml"):
+    # Local
+    with open("config.yaml", encoding="utf-8") as f:
+        config = yaml.load(f, Loader=SafeLoader)
+else:
+    # Cloud — st.secrets
+    config = {
+        "credentials": {
+            "usernames": {
+                k: dict(v)
+                for k, v in st.secrets["credentials"]["usernames"].items()
+            }
+        },
+        "cookie": dict(st.secrets["cookie"]),
+        "preauthorized": dict(st.secrets.get("preauthorized", {"emails": []})),
+    }
 
 authenticator = stauth.Authenticate(
     config["credentials"],
