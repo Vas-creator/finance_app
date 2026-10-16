@@ -13,30 +13,9 @@ def get_conn():
     return conn
 
 
-@st.cache_data(ttl=30)
-def query_df(sql, params=()):
-    """Cache query results for 30 seconds"""
-    conn = get_conn()
-    df = pd.read_sql_query(sql, conn, params=params)
-    conn.close()
-    return df
-
-
 def init_db():
-    # ... (existing code)
-    pass
-
-
-def execute(sql, params=()):
     conn = get_conn()
     c = conn.cursor()
-    c.execute(sql, params)
-    conn.commit()
-    last_id = c.lastrowid
-    conn.close()
-    # Clear cache after write
-    st.cache_data.clear()
-    return last_id
 
     # ============ SCHEMA ============
     c.executescript("""
@@ -45,16 +24,6 @@ def execute(sql, params=()):
         name TEXT NOT NULL,
         type TEXT DEFAULT 'cash',
         balance REAL DEFAULT 0
-    );
-
-    CREATE TABLE IF NOT EXISTS goals (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        target REAL NOT NULL,
-        saved REAL DEFAULT 0,
-        deadline TEXT,
-        note TEXT,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS categories (
@@ -93,13 +62,20 @@ def execute(sql, params=()):
         actual_price REAL,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS goals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        target REAL NOT NULL,
+        saved REAL DEFAULT 0,
+        deadline TEXT,
+        note TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
     """)
 
-    # ============ DEFAULT DATA (minimal) ============
-    # App ကို စတင်သုံးနိုင်ဖို့ အနည်းဆုံး data ပဲ ထည့်
-    # ကျန်တာ user ကိုယ်တိုင် Categories page ကနေ ထည့်နိုင်
-
-    # Default accounts (၃ ခု)
+    # ============ DEFAULT DATA ============
+    # Default accounts (3 ခု)
     c.execute("SELECT COUNT(*) FROM accounts")
     if c.fetchone()[0] == 0:
         c.executemany(
@@ -111,11 +87,11 @@ def execute(sql, params=()):
             ],
         )
 
-    
     conn.commit()
     conn.close()
 
 
+@st.cache_data(ttl=30)
 def query_df(sql, params=()):
     conn = get_conn()
     df = pd.read_sql_query(sql, conn, params=params)
@@ -130,4 +106,5 @@ def execute(sql, params=()):
     conn.commit()
     last_id = c.lastrowid
     conn.close()
+    st.cache_data.clear()  # Cache clear after write
     return last_id
