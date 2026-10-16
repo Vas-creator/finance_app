@@ -1,4 +1,5 @@
 import streamlit as st
+import pandas as pd 
 from datetime import date
 from core.db import query_df, execute
 from core.utils import mmk, recalc_account_balances, check_auth
@@ -16,31 +17,74 @@ tab1, tab2 = st.tabs(["➕ Add", "📋 List"])
 # ============ ADD ============
 # ============ ADD ============
 with tab1:
-    # ၁. Type ကို form အပြင်မှာ ရွေး (auto update အတွက်)
+    # Type selector (form အပြင် — auto update အတွက်)
     txn_type = st.radio(
         "Type",
         ["expense", "income"],
         horizontal=True,
         key="txn_type_radio",
+        format_func=lambda x: "📤 expense" if x == "expense" else "📥 income",
     )
 
-    # ၂. Filtered categories ကို type ပေါ်မူတည်ပြီး ချက်
-    categories = query_df("SELECT id, name, type FROM categories")
-    cat_filtered = categories[categories["type"] == txn_type]
+    # Category quick-add (form အပြင်)
+    with st.expander("➕ Category အသစ် ထည့်", expanded=False):
+        with st.form("quick_cat", clear_on_submit=True):
+            c1, c2, c3 = st.columns(3)
+            new_cat_name = c1.text_input("Name *", placeholder="Transport")
+            new_cat_type = c2.selectbox(
+                "Type",
+                ["expense", "income"],
+                index=0 if txn_type == "expense" else 1,
+            )
+            new_cat_budget = c3.number_input(
+                "Budget (ကျပ်)", min_value=0.0, step=10000.0
+            )
 
-    # ၃. Form ဖွင့်
+            if st.form_submit_button("💾 Category Add", use_container_width=True):
+                if not new_cat_name.strip():
+                    st.error("Name ဖြည့်ပါ")
+                else:
+                    dup = query_df(
+                        "SELECT id FROM categories WHERE name=? AND type=?",
+                        (new_cat_name.strip(), new_cat_type),
+                    )
+                    if not dup.empty:
+                        st.warning(f"'{new_cat_name}' ({new_cat_type}) ရှိပြီးသား")
+                    else:
+                        execute(
+                            "INSERT INTO categories (name, type, budget) VALUES (?,?,?)",
+                            (
+                                new_cat_name.strip(),
+                                new_cat_type,
+                                new_cat_budget if new_cat_type == "expense" else 0,
+                            ),
+                        )
+                        st.success(f"✅ '{new_cat_name}' ထည့်ပြီး")
+                        st.rerun()
+
+    # Transaction form
     with st.form("txn_form", clear_on_submit=True):
-        col1, col2 = st.columns(2)
+        # Categories ကို ပြန် query (အသစ် ထည့်ပြီးရင် refresh)
+        categories = query_df("SELECT id, name, type FROM categories")
+        cat_filtered = categories[categories["type"] == txn_type]
 
-        with col1:
+        c1, c2 = st.columns(2)
+
+        with c1:
             amount = st.number_input(
                 "Amount (ကျပ်)", min_value=0.0, step=1000.0
             )
             txn_date = st.date_input("Date", value=date.today())
 
-        with col2:
+        with c2:
             account = st.selectbox("Account", accounts["name"])
-            category = st.selectbox("Category", cat_filtered["name"])
+
+            if cat_filtered.empty:
+                st.warning(f"⚠️ {txn_type} category မရှိသေးဘူး — အပေါ်မှာ ထည့်ပါ")
+                category = None
+            else:
+                category = st.selectbox("Category", cat_filtered["name"])
+
             note = st.text_input("Note")
 
         submitted = st.form_submit_button("💾 Save", use_container_width=True)
@@ -48,6 +92,8 @@ with tab1:
         if submitted:
             if amount <= 0:
                 st.error("Amount က 0 ထက် ကြီးရမယ်")
+            elif not category:
+                st.error("Category မရှိသေးဘူး — အပေါ်မှာ ထည့်ပါ")
             else:
                 acc_id = int(
                     accounts.loc[accounts["name"] == account, "id"].iloc[0]
