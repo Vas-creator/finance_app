@@ -1,10 +1,11 @@
 import streamlit as st
-import pandas as pd
 from datetime import date
 from core.db import query_df, execute
-from core.utils import mmk, recalc_account_balances
+from core.utils import mmk, recalc_account_balances, check_auth
 
 st.set_page_config(page_title="Transactions", page_icon="💸", layout="wide")
+check_auth()   # ← ဒါကို ထည့်
+
 st.title("💸 Transactions")
 
 accounts = query_df("SELECT id, name FROM accounts")

@@ -41,3 +41,10 @@ def recalc_account_balances():
 
     conn.commit()
     conn.close()
+
+def check_auth():
+    """Auth check — page တိုင်း ခေါ်ရမယ်"""
+    import streamlit as st
+    if not st.session_state.get("authentication_status"):
+        st.error("🔒 Login လုပ်ပါ")
+        st.stop()

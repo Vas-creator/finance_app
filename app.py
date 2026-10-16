@@ -1,4 +1,7 @@
 import streamlit as st
+import yaml
+from yaml.loader import SafeLoader
+import streamlit_authenticator as stauth
 from datetime import date, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
@@ -10,6 +13,36 @@ st.set_page_config(
     page_icon="💰",
     layout="wide",
 )
+
+# ============ AUTH ============
+with open("config.yaml", encoding="utf-8") as f:
+    config = yaml.load(f, Loader=SafeLoader)
+
+authenticator = stauth.Authenticate(
+    config["credentials"],
+    config["cookie"]["name"],
+    config["cookie"]["key"],
+    config["cookie"]["expiry_days"],
+)
+
+authenticator.login(location="main")
+
+auth_status = st.session_state.get("authentication_status")
+
+if auth_status is False:
+    st.error("❌ Username သို့ Password မှားနေတယ်")
+    st.stop()
+
+if auth_status is None:
+    st.warning("👋 ဝင်ရောက်ဖို့ Login လုပ်ပါ")
+    st.stop()
+
+# ============ SIDEBAR LOGOUT ============
+with st.sidebar:
+    st.markdown(f"👤 **{st.session_state.get('name', 'User')}**")
+    st.caption(st.session_state.get("username", ""))
+    authenticator.logout("🚪 Logout", "sidebar")
+    st.divider()
 
 init_db()
 

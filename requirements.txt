@@ -2,3 +2,6 @@ streamlit>=1.36
 pandas>=2.0
 python-dateutil>=2.9
 plotly>=5.20
+streamlit-authenticator>=0.3.2
+PyYAML>=6.0
+openpyxl>=3.1
