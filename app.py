@@ -88,34 +88,47 @@ st.title("💰 My Personal Finance")
 st.caption(f"📅 {date.today().strftime('%B %d, %Y')}")
 
 # ============ ALERTS ============
+# ============ ALERTS ============
 st.subheader("🔔 သတိပေးချက်")
 
 alerts = []
+try:
+    # Over-budget
+    over_budget = query_df(...)
+    for _, row in over_budget.iterrows():
+        alerts.append(...)
 
-# 1. Over-budget alerts
-over_budget = query_df(
-    """
-    SELECT c.name AS category, c.budget,
-           COALESCE(SUM(t.amount),0) AS spent
-    FROM categories c
-    LEFT JOIN transactions t
-        ON t.category_id = c.id
-       AND t.type='expense'
-       AND t.date >= ? AND t.date < ?
-    WHERE c.type='expense' AND c.budget > 0
-    GROUP BY c.id
-    HAVING spent > c.budget
-    """,
-    month_range(),
-)
+    # Goal deadlines
+    upcoming_goals = query_df(...)
+    for _, g in upcoming_goals.iterrows():
+        alerts.append(...)
 
-for _, row in over_budget.iterrows():
-    over = row["spent"] - row["budget"]
-    pct = row["spent"] / row["budget"] * 100
-    alerts.append(
-        f"🔴 **{row['category']}** budget ကျော်နေတယ် — "
-        f"{mmk(row['spent'])} / {mmk(row['budget'])} ({pct:.0f}%)"
-    )
+    # Overdue
+    overdue_goals = query_df(...)
+    for _, g in overdue_goals.iterrows():
+        alerts.append(...)
+
+    # Low balance
+    low_balance = query_df(...)
+    for _, acc in low_balance.iterrows():
+        alerts.append(...)
+
+    # Wishlist saving
+    saving_wishes = query_df("SELECT COUNT(*) AS n FROM wishlist WHERE status='saving'")["n"][0]
+    if saving_wishes > 0:
+        alerts.append(...)
+
+except Exception:
+    pass  # Data မရှိရင် skip
+
+if alerts:
+    with st.expander(f"🔔 {len(alerts)} သတိပေးချက်"):
+        for alert in alerts:
+            st.warning(alert)
+else:
+    st.success("✅ သတိပေးချက် မရှိဘူး")
+
+st.divider()
 
 # 2. Goal deadlines (within 7 days)
 upcoming_goals = query_df(
