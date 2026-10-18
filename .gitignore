@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+data/*.db
+exports/*
+!exports/.gitkeep
+.venv/
+venv/
+.DS_Store
+.vscode/
+config.yaml
