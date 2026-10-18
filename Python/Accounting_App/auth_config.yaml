@@ -1,0 +1,12 @@
+cookie:
+  expiry_days: 30
+  key: accounting_app_secret_key_2024
+  name: accounting_app_cookie
+credentials:
+  usernames:
+    admin:
+      email: admin@example.com
+      name: အုပ်ချုပ်သူ
+      password: $2b$12$raAnqzG4q2mvt1m2U.upHOtO2OufFVOYpvUax9bcxJQ2a/kzMuH5.
+preauthorized:
+  emails: []

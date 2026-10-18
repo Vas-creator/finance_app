@@ -1,0 +1,822 @@
+# core/pdf_generator.py
+"""
+Accounting App - PDF Generator
+A4 Portrait PDF (၁ ရွက် ၁ ဇယား) — Pyidaungsu Font embed
+
+Statements:
+  1. Manufacturing Account
+  2. Trading & Profit/Loss
+  3. Balance Sheet
+
+Author: [Your Name]
+For: Retired Account Officer (Dad)
+"""
+
+import os
+from datetime import date, datetime
+from typing import Dict, Any, List, Optional, Tuple
+
+from fpdf import FPDF
+
+from core.utils import (
+    format_number, format_currency, format_date_mm,
+    parse_number, check_balance_sheet_balance
+)
+from core.templates import (
+    get_template, get_input_fields, get_all_line_items,
+    merge_template_with_data
+)
+
+
+# ============================================================
+# 1. PATHS & CONSTANTS
+# ============================================================
+
+# Project root ကို ရှာခြင်း (core/ folder ရဲ့ parent)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+FONT_REGULAR = os.path.join(BASE_DIR, "assets", "fonts", "pyidaungsu-regular.ttf")
+FONT_BOLD    = os.path.join(BASE_DIR, "assets", "fonts", "pyidaungsu-bold.ttf")
+
+FONT_FAMILY  = "Pyidaungsu"
+
+# A4 Portrait (mm)
+PAGE_WIDTH   = 210
+PAGE_HEIGHT  = 297
+MARGIN_LEFT  = 15
+MARGIN_RIGHT = 15
+MARGIN_TOP   = 15
+MARGIN_BOTTOM = 15
+CONTENT_WIDTH = PAGE_WIDTH - MARGIN_LEFT - MARGIN_RIGHT  # 180 mm
+
+# Colors (RGB)
+COLOR_HEADER_BG   = (31, 71, 136)     # Dark blue
+COLOR_HEADER_TEXT = (255, 255, 255)   # White
+COLOR_SECTION_BG  = (227, 242, 253)   # Light blue
+COLOR_SECTION_TXT = (21, 101, 192)    # Blue
+COLOR_SUBTOTAL_BG = (245, 245, 245)   # Light gray
+COLOR_TEXT        = (33, 33, 33)      # Dark gray
+COLOR_LINE        = (189, 189, 189)   # Gray
+COLOR_TOTAL_BG    = (255, 243, 224)   # Light orange
+COLOR_TOTAL_TXT   = (230, 81, 0)      # Orange
+COLOR_SUCCESS     = (46, 125, 50)     # Green
+COLOR_ERROR       = (198, 40, 40)     # Red
+
+
+# ============================================================
+# 2. PDF CLASS — Pyidaungsu support
+# ============================================================
+
+class AccountingPDF(FPDF):
+    """Pyidaungsu font ပါသော A4 PDF class"""
+    
+    def __init__(self, client_name: str = "", statement_title: str = ""):
+        super().__init__(orientation="P", unit="mm", format="A4")
+        self.client_name = client_name
+        self.statement_title = statement_title
+        self.set_auto_page_break(auto=False)  # ကိုယ်တိုင် ထိန်း
+        self.set_margins(MARGIN_LEFT, MARGIN_TOP, MARGIN_RIGHT)
+        self._register_fonts()
+    
+    def _register_fonts(self):
+        """Pyidaungsu Regular + Bold register"""
+        if not os.path.exists(FONT_REGULAR):
+            raise FileNotFoundError(
+                f"Font file မတွေ့ပါ: {FONT_REGULAR}\n"
+                f"assets/fonts/ ထဲမှာ pyidaungsu-regular.ttf ထည့်ပါ"
+            )
+        if not os.path.exists(FONT_BOLD):
+            raise FileNotFoundError(
+                f"Font file မတွေ့ပါ: {FONT_BOLD}\n"
+                f"assets/fonts/ ထဲမှာ pyidaungsu-bold.ttf ထည့်ပါ"
+            )
+        
+        self.add_font(FONT_FAMILY, "", FONT_REGULAR)
+        self.add_font(FONT_FAMILY, "B", FONT_BOLD)
+    
+    # ---------- Header / Footer ----------
+    
+    def header(self):
+        """စာမျက်နှာ ထိပ်ပိုင်း — Client name + Statement title"""
+        # Top border line (thick)
+        self.set_draw_color(*COLOR_HEADER_BG)
+        self.set_line_width(0.8)
+        self.line(MARGIN_LEFT, 12, PAGE_WIDTH - MARGIN_RIGHT, 12)
+        
+        # Client name (large, bold)
+        self.set_font(FONT_FAMILY, "B", 16)
+        self.set_text_color(*COLOR_HEADER_BG)
+        self.set_xy(MARGIN_LEFT, 16)
+        self.cell(CONTENT_WIDTH, 8, self.client_name, align="C")
+        
+        # Statement title (medium)
+        self.set_font(FONT_FAMILY, "B", 13)
+        self.set_text_color(*COLOR_TEXT)
+        self.set_xy(MARGIN_LEFT, 25)
+        self.cell(CONTENT_WIDTH, 7, self.statement_title, align="C")
+        
+        # Bottom border line (thin)
+        self.set_draw_color(*COLOR_LINE)
+        self.set_line_width(0.3)
+        self.line(MARGIN_LEFT, 34, PAGE_WIDTH - MARGIN_RIGHT, 34)
+        
+        # Body စတင်မည့် Y position
+        self.set_y(38)
+    
+    def footer(self):
+        """စာမျက်နှာ အောက်ပိုင်း — Generated date + page number"""
+        self.set_y(-15)
+        self.set_font(FONT_FAMILY, "", 8)
+        self.set_text_color(120, 120, 120)
+        
+        # Left: generated date
+        self.set_x(MARGIN_LEFT)
+        gen_date = datetime.now().strftime("%Y-%m-%d %H:%M")
+        self.cell(CONTENT_WIDTH / 2, 6, f"Generated: {gen_date}", align="L")
+        
+        # Right: page number
+        self.set_x(MARGIN_LEFT + CONTENT_WIDTH / 2)
+        self.cell(CONTENT_WIDTH / 2, 6, f"စာမျက်နှာ {self.page_no()}", align="R")
+
+
+# ============================================================
+# 3. TABLE DRAWING HELPERS
+# ============================================================
+
+# Column width (mm)
+COL_LABEL_W = 130
+COL_AMOUNT_W = 50
+ROW_HEIGHT = 7
+
+
+def _draw_section_header(pdf: AccountingPDF, label: str):
+    """Section header ရေးခြင်း (bg color + bold)"""
+    pdf.set_fill_color(*COLOR_SECTION_BG)
+    pdf.set_text_color(*COLOR_SECTION_TXT)
+    pdf.set_font(FONT_FAMILY, "B", 10)
+    
+    x = pdf.get_x()
+    y = pdf.get_y()
+    pdf.rect(x, y, CONTENT_WIDTH, ROW_HEIGHT, style="F")
+    pdf.set_xy(x + 2, y)
+    pdf.cell(CONTENT_WIDTH - 4, ROW_HEIGHT, label, align="L")
+    pdf.set_xy(x, y + ROW_HEIGHT)
+
+
+def _draw_line_item(pdf: AccountingPDF, 
+                    label: str, 
+                    value: float,
+                    indent: int = 4,
+                    is_deduction: bool = False,
+                    is_bold: bool = False):
+    """Line item တစ်ခု ရေးခြင်း"""
+    pdf.set_font(FONT_FAMILY, "B" if is_bold else "", 10)
+    pdf.set_text_color(*COLOR_TEXT)
+    
+    x = pdf.get_x()
+    y = pdf.get_y()
+    
+    # Label (indented)
+    pdf.set_xy(x + indent, y)
+    label_w = COL_LABEL_W - indent
+    pdf.cell(label_w, ROW_HEIGHT, label, align="L")
+    
+    # Amount (right-aligned)
+    pdf.set_xy(x + COL_LABEL_W, y)
+    amount_str = format_number(value, decimals=2)
+    if is_deduction:
+        amount_str = f"({amount_str})"  # ကွင်းထဲ ထည့် (accounting convention)
+    pdf.cell(COL_AMOUNT_W, ROW_HEIGHT, amount_str, align="R")
+    
+    pdf.set_xy(x, y + ROW_HEIGHT)
+
+
+def _draw_subtotal(pdf: AccountingPDF, label: str, value: float):
+    """Subtotal ရေးခြင်း (bold + light bg + top border)"""
+    x = pdf.get_x()
+    y = pdf.get_y()
+    
+    # Top border line
+    pdf.set_draw_color(*COLOR_LINE)
+    pdf.set_line_width(0.3)
+    pdf.line(x, y, x + CONTENT_WIDTH, y)
+    
+    # Background
+    pdf.set_fill_color(*COLOR_SUBTOTAL_BG)
+    pdf.rect(x, y, CONTENT_WIDTH, ROW_HEIGHT, style="F")
+    
+    # Text
+    pdf.set_font(FONT_FAMILY, "B", 10)
+    pdf.set_text_color(*COLOR_TEXT)
+    pdf.set_xy(x + 2, y)
+    pdf.cell(COL_LABEL_W - 2, ROW_HEIGHT, label, align="L")
+    
+    pdf.set_xy(x + COL_LABEL_W, y)
+    pdf.cell(COL_AMOUNT_W, ROW_HEIGHT, format_number(value, 2), align="R")
+    
+    pdf.set_xy(x, y + ROW_HEIGHT)
+
+
+def _draw_grand_total(pdf: AccountingPDF, label: str, value: float):
+    """Grand total / Calculated total ရေးခြင်း (orange bg, bold, double line)"""
+    x = pdf.get_x()
+    y = pdf.get_y()
+    
+    # Double top border
+    pdf.set_draw_color(*COLOR_TOTAL_TXT)
+    pdf.set_line_width(0.5)
+    pdf.line(x, y, x + CONTENT_WIDTH, y)
+    pdf.line(x, y + 0.8, x + CONTENT_WIDTH, y + 0.8)
+    
+    # Background
+    pdf.set_fill_color(*COLOR_TOTAL_BG)
+    pdf.rect(x, y + 1, CONTENT_WIDTH, ROW_HEIGHT, style="F")
+    
+    # Text
+    pdf.set_font(FONT_FAMILY, "B", 11)
+    pdf.set_text_color(*COLOR_TOTAL_TXT)
+    pdf.set_xy(x + 2, y + 1)
+    pdf.cell(COL_LABEL_W - 2, ROW_HEIGHT, label, align="L")
+    
+    pdf.set_xy(x + COL_LABEL_W, y + 1)
+    pdf.cell(COL_AMOUNT_W, ROW_HEIGHT, format_number(value, 2), align="R")
+    
+    pdf.set_xy(x, y + ROW_HEIGHT + 1)
+
+
+def _draw_spacer(pdf: AccountingPDF, height: float = 3):
+    """နေရာ ခြားထားခြင်း"""
+    pdf.set_xy(pdf.get_x(), pdf.get_y() + height)
+
+
+def _draw_period_line(pdf: AccountingPDF, text: str):
+    """ကာလ ရေးခြင်း (Period end / As at date)"""
+    pdf.set_font(FONT_FAMILY, "", 10)
+    pdf.set_text_color(80, 80, 80)
+    x = pdf.get_x()
+    y = pdf.get_y()
+    pdf.set_xy(x, y)
+    pdf.cell(CONTENT_WIDTH, ROW_HEIGHT, text, align="R")
+    pdf.set_xy(x, y + ROW_HEIGHT)
+
+
+# ============================================================
+# 4. CALCULATION ENGINE
+# ============================================================
+
+def calculate_manufacturing(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Manufacturing Account — auto-calculation"""
+    t = merge_template_with_data("manufacturing", data)
+    
+    dm = t["direct_materials"]["items"]
+    cost_of_materials_used = (
+        parse_number(dm["opening_stock_raw"]["value"]) +
+        parse_number(dm["purchases_raw"]["value"]) +
+        parse_number(dm["carriage_inward"]["value"]) +
+        parse_number(dm["customs_duty"]["value"]) -
+        parse_number(dm["closing_stock_raw"]["value"])
+    )
+    t["direct_materials"]["cost_of_materials_used"] = cost_of_materials_used
+    
+    dl = t["direct_labour"]["items"]
+    direct_labour_total = (
+        parse_number(dl["wages_direct"]["value"]) +
+        parse_number(dl["wages_overtime"]["value"]) +
+        parse_number(dl["wages_contract"]["value"])
+    )
+    t["direct_labour"]["direct_labour_total"] = direct_labour_total
+    
+    de = t["direct_expenses"]["items"]
+    direct_expenses_total = (
+        parse_number(de["royalty"]["value"]) +
+        parse_number(de["hire_plant"]["value"]) +
+        parse_number(de["fuel_power_direct"]["value"])
+    )
+    t["direct_expenses"]["direct_expenses_total"] = direct_expenses_total
+    
+    prime_cost = cost_of_materials_used + direct_labour_total + direct_expenses_total
+    t["prime_cost"]["value"] = prime_cost
+    
+    fo = t["factory_overhead"]["items"]
+    factory_overhead_total = sum(
+        parse_number(item["value"]) for item in fo.values()
+    )
+    t["factory_overhead"]["factory_overhead_total"] = factory_overhead_total
+    
+    wip = t["work_in_progress"]["items"]
+    opening_wip = parse_number(wip["add_opening_wip"]["value"])
+    closing_wip = parse_number(wip["less_closing_wip"]["value"])
+    
+    production_cost = prime_cost + factory_overhead_total + opening_wip - closing_wip
+    t["production_cost"]["value"] = production_cost
+    t["transfer_to_trading"]["value"] = production_cost
+    
+    return t
+
+
+def calculate_trading_pl(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Trading & P&L — auto-calculation"""
+    t = merge_template_with_data("trading_pl", data)
+    
+    # --- Trading Account ---
+    sales = t["trading"]["sales"]["items"]
+    net_sales = (
+        parse_number(sales["cash_sales"]["value"]) +
+        parse_number(sales["credit_sales"]["value"]) -
+        parse_number(sales["less_sales_return"]["value"])
+    )
+    t["trading"]["sales"]["net_sales"] = net_sales
+    
+    cogs = t["trading"]["cogs"]["items"]
+    cogs_total = (
+        parse_number(cogs["opening_stock_finished"]["value"]) +
+        parse_number(cogs["add_purchases"]["value"]) +
+        parse_number(cogs["add_manufacturing_cost"]["value"]) +
+        parse_number(cogs["add_carriage_inward"]["value"]) +
+        parse_number(cogs["add_duty"]["value"]) -
+        parse_number(cogs["less_purchase_return"]["value"]) -
+        parse_number(cogs["less_closing_stock"]["value"])
+    )
+    t["trading"]["cogs"]["cogs_total"] = cogs_total
+    
+    gross_profit = net_sales - cogs_total
+    t["trading"]["gross_profit"]["value"] = gross_profit
+    
+    # --- P&L Account ---
+    oi = t["profit_loss"]["other_income"]["items"]
+    other_income_total = sum(
+        parse_number(item["value"]) for item in oi.values()
+    )
+    t["profit_loss"]["other_income"]["other_income_total"] = other_income_total
+    
+    ex = t["profit_loss"]["expenses"]["items"]
+    expenses_total = sum(
+        parse_number(item["value"]) for item in ex.values()
+    )
+    t["profit_loss"]["expenses"]["expenses_total"] = expenses_total
+    
+    net_profit = gross_profit + other_income_total - expenses_total
+    t["profit_loss"]["net_profit"]["value"] = net_profit
+    
+    return t
+
+
+def calculate_balance_sheet(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Balance Sheet — auto-calculation + balance check"""
+    t = merge_template_with_data("balance_sheet", data)
+    
+    # --- Assets ---
+    ca = t["assets"]["current_assets"]["items"]
+    current_assets_total = sum(
+        parse_number(item["value"]) for item in ca.values()
+    )
+    t["assets"]["current_assets"]["current_assets_total"] = current_assets_total
+    
+    fa = t["assets"]["fixed_assets"]["items"]
+    fixed_assets_total = (
+        sum(parse_number(v["value"]) for k, v in fa.items() 
+            if not v.get("is_deduction", False)) -
+        parse_number(fa["less_depreciation"]["value"])
+    )
+    t["assets"]["fixed_assets"]["fixed_assets_total"] = fixed_assets_total
+    
+    oa = t["assets"]["other_assets"]["items"]
+    other_assets_total = sum(
+        parse_number(item["value"]) for item in oa.values()
+    )
+    t["assets"]["other_assets"]["other_assets_total"] = other_assets_total
+    
+    total_assets = current_assets_total + fixed_assets_total + other_assets_total
+    t["assets"]["total_assets"]["value"] = total_assets
+    
+    # --- Liabilities ---
+    cl = t["liabilities"]["current_liabilities"]["items"]
+    current_liabilities_total = sum(
+        parse_number(item["value"]) for item in cl.values()
+    )
+    t["liabilities"]["current_liabilities"]["current_liabilities_total"] = current_liabilities_total
+    
+    ltl = t["liabilities"]["long_term_liabilities"]["items"]
+    long_term_liabilities_total = sum(
+        parse_number(item["value"]) for item in ltl.values()
+    )
+    t["liabilities"]["long_term_liabilities"]["long_term_liabilities_total"] = long_term_liabilities_total
+    
+    total_liabilities = current_liabilities_total + long_term_liabilities_total
+    t["liabilities"]["total_liabilities"]["value"] = total_liabilities
+    
+    # --- Capital ---
+    cap = t["capital"]["items"]
+    capital_total = (
+        parse_number(cap["opening_capital"]["value"]) +
+        parse_number(cap["add_net_profit"]["value"]) -
+        parse_number(cap["less_drawings"]["value"])
+    )
+    t["capital"]["capital_total"] = capital_total
+    
+    # --- Balance Check ---
+    liab_cap = total_liabilities + capital_total
+    t["balance_check"]["liabilities_and_capital"]["value"] = liab_cap
+    diff = total_assets - liab_cap
+    t["balance_check"]["difference"] = diff
+    t["balance_check"]["is_balanced"] = abs(diff) < 0.01
+    
+    return t
+
+
+# ============================================================
+# 5. PDF SECTION RENDERERS
+# ============================================================
+
+def _render_manufacturing(pdf: AccountingPDF, data: Dict[str, Any]):
+    """Manufacturing Account ကို PDF ပေါ်တွင် ရေးခြင်း"""
+    t = calculate_manufacturing(data)
+    
+    # Period
+    period = t.get("period_end", "")
+    if period:
+        _draw_period_line(pdf, f"ကာလကုန်: {format_date_mm(period)}")
+    
+    _draw_spacer(pdf, 3)
+    
+    # --- Direct Materials ---
+    _draw_section_header(pdf, "၁။ တိုက်ရိုက် ကုန်ကြမ်းများ")
+    dm = t["direct_materials"]["items"]
+    _draw_line_item(pdf, dm["opening_stock_raw"]["label_mm"], dm["opening_stock_raw"]["value"])
+    _draw_line_item(pdf, dm["purchases_raw"]["label_mm"], dm["purchases_raw"]["value"])
+    _draw_line_item(pdf, dm["carriage_inward"]["label_mm"], dm["carriage_inward"]["value"])
+    _draw_line_item(pdf, dm["customs_duty"]["label_mm"], dm["customs_duty"]["value"])
+    _draw_line_item(pdf, dm["closing_stock_raw"]["label_mm"], dm["closing_stock_raw"]["value"], is_deduction=True)
+    _draw_subtotal(pdf, t["direct_materials"]["subtotal_mm"], t["direct_materials"]["cost_of_materials_used"])
+    _draw_spacer(pdf, 3)
+    
+    # --- Direct Labour ---
+    _draw_section_header(pdf, "၂။ တိုက်ရိုက် အလုပ်သမားခ")
+    dl = t["direct_labour"]["items"]
+    for k in ["wages_direct", "wages_overtime", "wages_contract"]:
+        _draw_line_item(pdf, dl[k]["label_mm"], dl[k]["value"])
+    _draw_subtotal(pdf, t["direct_labour"]["subtotal_mm"], t["direct_labour"]["direct_labour_total"])
+    _draw_spacer(pdf, 3)
+    
+    # --- Direct Expenses ---
+    _draw_section_header(pdf, "၃။ တိုက်ရိုက် အသုံးစရိတ်များ")
+    de = t["direct_expenses"]["items"]
+    for k in ["royalty", "hire_plant", "fuel_power_direct"]:
+        _draw_line_item(pdf, de[k]["label_mm"], de[k]["value"])
+    _draw_subtotal(pdf, t["direct_expenses"]["subtotal_mm"], t["direct_expenses"]["direct_expenses_total"])
+    _draw_spacer(pdf, 3)
+    
+    # --- PRIME COST ---
+    _draw_grand_total(pdf, "အခြေခံ ကုန်ကျစရိတ် (Prime Cost)", t["prime_cost"]["value"])
+    _draw_spacer(pdf, 4)
+    
+    # --- Factory Overhead ---
+    _draw_section_header(pdf, "၄။ စက်ရုံ အသုံးစရိတ်များ")
+    fo = t["factory_overhead"]["items"]
+    for k, item in fo.items():
+        _draw_line_item(pdf, item["label_mm"], item["value"])
+    _draw_subtotal(pdf, t["factory_overhead"]["subtotal_mm"], t["factory_overhead"]["factory_overhead_total"])
+    _draw_spacer(pdf, 3)
+    
+    # --- WIP ---
+    _draw_section_header(pdf, "၅။ လုပ်ငန်း ဆောင်ရွက်ဆဲ (WIP)")
+    wip = t["work_in_progress"]["items"]
+    _draw_line_item(pdf, wip["add_opening_wip"]["label_mm"], wip["add_opening_wip"]["value"])
+    _draw_line_item(pdf, wip["less_closing_wip"]["label_mm"], wip["less_closing_wip"]["value"], is_deduction=True)
+    _draw_spacer(pdf, 3)
+    
+    # --- PRODUCTION COST ---
+    _draw_grand_total(pdf, "ကုန်ထုတ်လုပ်မှု ကုန်ကျစရိတ် (Production Cost)", t["production_cost"]["value"])
+    _draw_spacer(pdf, 4)
+    
+    # --- Transfer note ---
+    pdf.set_font(FONT_FAMILY, "B", 10)
+    pdf.set_text_color(*COLOR_SUCCESS)
+    x = pdf.get_x()
+    y = pdf.get_y()
+    pdf.set_xy(x, y)
+    pdf.cell(CONTENT_WIDTH, ROW_HEIGHT, 
+         f"အရောင်းအဝယ်စာရင်းသို့ လွှဲပြောင်း: {format_number(t['transfer_to_trading']['value'], 2)}",
+         align="C")
+
+
+def _render_trading_pl(pdf: AccountingPDF, data: Dict[str, Any]):
+    """Trading & P&L Account ကို PDF ပေါ်တွင် ရေးခြင်း"""
+    t = calculate_trading_pl(data)
+    
+    period = t.get("period_end", "")
+    if period:
+        _draw_period_line(pdf, f"ကာလကုန်: {format_date_mm(period)}")
+    
+    _draw_spacer(pdf, 3)
+    
+    # ========== TRADING ACCOUNT ==========
+    _draw_section_header(pdf, "က။ အရောင်းအဝယ် စာရင်း (Trading Account)")
+    
+    # Sales
+    sales = t["trading"]["sales"]["items"]
+    _draw_line_item(pdf, "ငွေသား အရောင်း", sales["cash_sales"]["value"])
+    _draw_line_item(pdf, "အကြွေး အရောင်း", sales["credit_sales"]["value"])
+    _draw_line_item(pdf, "အရောင်းပြန်အမ်း နုတ်", sales["less_sales_return"]["value"], is_deduction=True)
+    _draw_subtotal(pdf, "အရောင်း စုစုပေါင်း (Net Sales)", t["trading"]["sales"]["net_sales"])
+    _draw_spacer(pdf, 3)
+    
+    # COGS
+    cogs = t["trading"]["cogs"]["items"]
+    _draw_line_item(pdf, "အဖွင့် ကုန်ချောလက်ကျန်", cogs["opening_stock_finished"]["value"])
+    _draw_line_item(pdf, "ဝယ်ယူမှု ပေါင်း", cogs["add_purchases"]["value"])
+    _draw_line_item(pdf, "ကုန်ထုတ်လုပ်မှု ကုန်ကျစရိတ် ပေါင်း", cogs["add_manufacturing_cost"]["value"])
+    _draw_line_item(pdf, "သယ်ယူပို့ဆောင်ခ ပေါင်း", cogs["add_carriage_inward"]["value"])
+    _draw_line_item(pdf, "အကောက်ခွန် ပေါင်း", cogs["add_duty"]["value"])
+    _draw_line_item(pdf, "ဝယ်ယူမှု ပြန်အမ်း နုတ်", cogs["less_purchase_return"]["value"], is_deduction=True)
+    _draw_line_item(pdf, "အပိတ် ကုန်ချောလက်ကျန် နုတ်", cogs["less_closing_stock"]["value"], is_deduction=True)
+    _draw_subtotal(pdf, "COGS စုစုပေါင်း", t["trading"]["cogs"]["cogs_total"])
+    _draw_spacer(pdf, 4)
+    
+    # Gross Profit
+    gp = t["trading"]["gross_profit"]
+    gp_label = gp["label_mm"] if gp["value"] >= 0 else gp["if_negative_label_mm"]
+    _draw_grand_total(pdf, gp_label, gp["value"])
+    _draw_spacer(pdf, 5)
+    
+    # ========== P&L ACCOUNT ==========
+    _draw_section_header(pdf, "ခ။ အမြတ်အစွန်း စာရင်း (Profit & Loss Account)")
+    _draw_line_item(pdf, "အမြတ် (Gross Profit) ဖြင့် စတင်", t["trading"]["gross_profit"]["value"], is_bold=True)
+    _draw_spacer(pdf, 3)
+    
+    # Other Income
+    _draw_section_header(pdf, "အခြား ဝင်ငွေများ")
+    oi = t["profit_loss"]["other_income"]["items"]
+    for k, item in oi.items():
+        _draw_line_item(pdf, item["label_mm"], item["value"])
+    _draw_subtotal(pdf, "အခြား ဝင်ငွေ စုစုပေါင်း", t["profit_loss"]["other_income"]["other_income_total"])
+    _draw_spacer(pdf, 4)
+    
+    # Expenses
+    _draw_section_header(pdf, "အသုံးစရိတ်များ")
+    ex = t["profit_loss"]["expenses"]["items"]
+    for k, item in ex.items():
+        _draw_line_item(pdf, item["label_mm"], item["value"])
+    _draw_subtotal(pdf, "အသုံးစရိတ် စုစုပေါင်း", t["profit_loss"]["expenses"]["expenses_total"])
+    _draw_spacer(pdf, 4)
+    
+    # Net Profit
+    np_ = t["profit_loss"]["net_profit"]
+    np_label = np_["label_mm"] if np_["value"] >= 0 else np_["if_negative_label_mm"]
+    _draw_grand_total(pdf, np_label, np_["value"])
+
+
+def _render_balance_sheet(pdf: AccountingPDF, data: Dict[str, Any]):
+    """Balance Sheet ကို PDF ပေါ်တွင် ရေးခြင်း"""
+    t = calculate_balance_sheet(data)
+    
+    as_at = t.get("as_at_date", "")
+    if as_at:
+        _draw_period_line(pdf, f"ရက်စွဲ: {format_date_mm(as_at)}")
+    
+    _draw_spacer(pdf, 3)
+    
+    # ========== ASSETS ==========
+    _draw_section_header(pdf, "ပိုင်ဆိုင်မှုများ (ASSETS)")
+    
+    # Current Assets
+    _draw_section_header(pdf, "၁။ လက်ရှိ ပိုင်ဆိုင်မှုများ")
+    ca = t["assets"]["current_assets"]["items"]
+    for k, item in ca.items():
+        _draw_line_item(pdf, item["label_mm"], item["value"])
+    _draw_subtotal(pdf, "လက်ရှိ ပိုင်ဆိုင်မှု စုစုပေါင်း", t["assets"]["current_assets"]["current_assets_total"])
+    _draw_spacer(pdf, 3)
+    
+    # Fixed Assets
+    _draw_section_header(pdf, "၂။ ပုံသေ ပိုင်ဆိုင်မှုများ")
+    fa = t["assets"]["fixed_assets"]["items"]
+    for k, item in fa.items():
+        is_ded = item.get("is_deduction", False)
+        _draw_line_item(pdf, item["label_mm"], item["value"], is_deduction=is_ded)
+    _draw_subtotal(pdf, "ပုံသေ ပိုင်ဆိုင်မှု စုစုပေါင်း", t["assets"]["fixed_assets"]["fixed_assets_total"])
+    _draw_spacer(pdf, 3)
+    
+    # Other Assets
+    _draw_section_header(pdf, "၃။ အခြား ပိုင်ဆိုင်မှုများ")
+    oa = t["assets"]["other_assets"]["items"]
+    for k, item in oa.items():
+        _draw_line_item(pdf, item["label_mm"], item["value"])
+    _draw_subtotal(pdf, "အခြား ပိုင်ဆိုင်မှု စုစုပေါင်း", t["assets"]["other_assets"]["other_assets_total"])
+    _draw_spacer(pdf, 4)
+    
+    _draw_grand_total(pdf, "ပိုင်ဆိုင်မှု စုစုပေါင်း (TOTAL ASSETS)", t["assets"]["total_assets"]["value"])
+    _draw_spacer(pdf, 5)
+    
+    # ========== LIABILITIES ==========
+    _draw_section_header(pdf, "အကြွေးများ (LIABILITIES)")
+    
+    # Current Liabilities
+    _draw_section_header(pdf, "၁။ လက်ရှိ အကြွေးများ")
+    cl = t["liabilities"]["current_liabilities"]["items"]
+    for k, item in cl.items():
+        _draw_line_item(pdf, item["label_mm"], item["value"])
+    _draw_subtotal(pdf, "လက်ရှိ အကြွေး စုစုပေါင်း", t["liabilities"]["current_liabilities"]["current_liabilities_total"])
+    _draw_spacer(pdf, 3)
+    
+    # Long-term Liabilities
+    _draw_section_header(pdf, "၂။ ရေရှည် အကြွေးများ")
+    ltl = t["liabilities"]["long_term_liabilities"]["items"]
+    for k, item in ltl.items():
+        _draw_line_item(pdf, item["label_mm"], item["value"])
+    _draw_subtotal(pdf, "ရေရှည် အကြွေး စုစုပေါင်း", t["liabilities"]["long_term_liabilities"]["long_term_liabilities_total"])
+    _draw_spacer(pdf, 4)
+    
+    _draw_grand_total(pdf, "အကြွေး စုစုပေါင်း", t["liabilities"]["total_liabilities"]["value"])
+    _draw_spacer(pdf, 5)
+    
+    # ========== CAPITAL ==========
+    _draw_section_header(pdf, "အရင်း ငွေ (CAPITAL)")
+    cap = t["capital"]["items"]
+    _draw_line_item(pdf, cap["opening_capital"]["label_mm"], cap["opening_capital"]["value"])
+    _draw_line_item(pdf, cap["add_net_profit"]["label_mm"], cap["add_net_profit"]["value"])
+    _draw_line_item(pdf, cap["less_drawings"]["label_mm"], cap["less_drawings"]["value"], is_deduction=True)
+    _draw_subtotal(pdf, "အရင်း စုစုပေါင်း", t["capital"]["capital_total"])
+    _draw_spacer(pdf, 5)
+    
+    # ========== BALANCE CHECK ==========
+    _draw_grand_total(pdf, "အကြွေးနှင့် အရင်း စုစုပေါင်း", t["balance_check"]["liabilities_and_capital"]["value"])
+    _draw_spacer(pdf, 4)
+    
+    # Balance status
+    diff = t["balance_check"]["difference"]
+    is_balanced = t["balance_check"]["is_balanced"]
+    
+    pdf.set_font(FONT_FAMILY, "B", 11)
+    if is_balanced:
+        pdf.set_text_color(*COLOR_SUCCESS)
+        msg = f"✓ ဟုန်းချင်း ကိုက်ညီပါသည် (Assets = Liabilities + Capital)"
+    else:
+        pdf.set_text_color(*COLOR_ERROR)
+        msg = f"✗ ကွာဟမှု: {format_number(diff, 2)} ကျပ်"
+    
+    x = pdf.get_x()
+    y = pdf.get_y()
+    pdf.set_xy(x, y)
+    pdf.cell(CONTENT_WIDTH, ROW_HEIGHT, msg, align="C")
+    pdf.set_xy(x, y + ROW_HEIGHT)
+
+
+# ============================================================
+# 6. PUBLIC API
+# ============================================================
+
+def generate_pdf(statement_type: str,
+                 client_name: str,
+                 data: Dict[str, Any],
+                 period_end: str = "",
+                 as_at_date: str = "",
+                 output_path: Optional[str] = None) -> bytes:
+    """
+    PDF ဖန်တီးခြင်း
+    
+    Args:
+        statement_type: "manufacturing" | "trading_pl" | "balance_sheet"
+        client_name:    Client အမည်
+        data:           Line item values {key: value, ...}
+        period_end:     ကာလကုန် (YYYY-MM-DD)
+        as_at_date:     Balance Sheet ရက်စွဲ (YYYY-MM-DD)
+        output_path:    သိမ်းမည့် path (None ဖြစ်လျှင် bytes သာ return)
+    
+    Returns:
+        PDF bytes
+    """
+    titles = {
+        "manufacturing": "ကုန်ထုတ်လုပ်မှု စာရင်း (Manufacturing Account)",
+        "trading_pl":    "အရောင်းအဝယ် အမြတ်အစွန်း စာရင်း (Trading & P&L)",
+        "balance_sheet": "ငွေစာရင်း လက်ကျန်စာရင်း (Balance Sheet)",
+    }
+    
+    if statement_type not in titles:
+        raise ValueError(f"မသိသော statement type: {statement_type}")
+    
+    # Template data ထဲ period/as_at ထည့်
+    data = dict(data)
+    if statement_type == "manufacturing":
+        data["period_end"] = period_end
+    elif statement_type == "trading_pl":
+        data["period_end"] = period_end
+    elif statement_type == "balance_sheet":
+        data["as_at_date"] = as_at_date
+    
+    # PDF ဖန်တီး
+    pdf = AccountingPDF(client_name=client_name, statement_title=titles[statement_type])
+    pdf.add_page()
+    
+    # Statement type အလိုက် render
+    if statement_type == "manufacturing":
+        _render_manufacturing(pdf, data)
+    elif statement_type == "trading_pl":
+        _render_trading_pl(pdf, data)
+    elif statement_type == "balance_sheet":
+        _render_balance_sheet(pdf, data)
+    
+    # Output
+    if output_path:
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        pdf.output(output_path)
+    
+    return bytes(pdf.output())
+
+
+def generate_all_three(client_name: str,
+                       manufacturing_data: Dict[str, Any],
+                       trading_pl_data: Dict[str, Any],
+                       balance_sheet_data: Dict[str, Any],
+                       period_end: str = "",
+                       as_at_date: str = "",
+                       output_dir: Optional[str] = None) -> Dict[str, bytes]:
+    """
+    Financial statement ၃ ခုလုံးကို PDF တစ်ခါတည်း ဖန်တီးခြင်း
+    
+    Returns:
+        {"manufacturing": bytes, "trading_pl": bytes, "balance_sheet": bytes}
+    """
+    result = {}
+    
+    for stype, data in [
+        ("manufacturing", manufacturing_data),
+        ("trading_pl",    trading_pl_data),
+        ("balance_sheet", balance_sheet_data),
+    ]:
+        out_path = None
+        if output_dir:
+            out_path = os.path.join(
+                output_dir,
+                f"{client_name.replace(' ', '_')}_{stype}.pdf"
+            )
+        
+        result[stype] = generate_pdf(
+            statement_type=stype,
+            client_name=client_name,
+            data=data,
+            period_end=period_end,
+            as_at_date=as_at_date,
+            output_path=out_path,
+        )
+    
+    return result
+
+
+# ============================================================
+# 7. QUICK TEST
+# ============================================================
+
+if __name__ == "__main__":
+    print("=" * 60)
+    print("PDF GENERATOR — QUICK TEST")
+    print("=" * 60)
+    
+    # Sample data
+    sample_mfg = {
+        "opening_stock_raw": 50000,
+        "purchases_raw": 300000,
+        "carriage_inward": 10000,
+        "customs_duty": 5000,
+        "closing_stock_raw": 60000,
+        "wages_direct": 120000,
+        "wages_overtime": 15000,
+        "wages_contract": 20000,
+        "royalty": 5000,
+        "hire_plant": 8000,
+        "fuel_power_direct": 12000,
+        "factory_rent": 30000,
+        "factory_rates": 5000,
+        "factory_insurance": 4000,
+        "factory_power": 25000,
+        "factory_salary": 60000,
+        "depreciation_plant": 20000,
+        "repairs_plant": 8000,
+        "indirect_wages": 15000,
+        "factory_misc": 6000,
+        "add_opening_wip": 20000,
+        "less_closing_wip": 25000,
+    }
+    
+    print("\n[1] Manufacturing PDF ဖန်တီးခြင်း...")
+    out_dir = os.path.join(BASE_DIR, "output")
+    os.makedirs(out_dir, exist_ok=True)
+    
+    pdf_bytes = generate_pdf(
+        statement_type="manufacturing",
+        client_name="ရွှေမြို့တော် ကုမ္ပဏီ လီမိတက်",
+        data=sample_mfg,
+        period_end="2024-12-31",
+        output_path=os.path.join(out_dir, "test_manufacturing.pdf"),
+    )
+    print(f"  ✓ PDF ဖန်တီးပြီး ({len(pdf_bytes):,} bytes)")
+    print(f"  ✓ output/test_manufacturing.pdf သိမ်းပြီး")
+    
+    print("\n[2] Font files စစ်ဆေးခြင်း...")
+    print(f"  Regular: {FONT_REGULAR}")
+    print(f"  Exists:  {os.path.exists(FONT_REGULAR)}")
+    print(f"  Bold:    {FONT_BOLD}")
+    print(f"  Exists:  {os.path.exists(FONT_BOLD)}")
+    
+    print("\n" + "=" * 60)
+    print("✓ Test အောင်မြင်ပါသည်")
+    print("=" * 60)
